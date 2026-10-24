@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
+import { block } from "./block.ts";
 import { scan } from "./scan.ts";
 import { simulate } from "./simulate.ts";
 
@@ -10,6 +11,10 @@ usage:
                [--probe-top 6] [--probe-slots 4] [--probe-samples 3] [--concurrency 4]
       Analyze recent blocks: dependency graphs, parallelism, hottest slots, and why they are hot.
       --probe-top/--probe-slots: replay the hottest slots of the top N contracts to find the root cause.
+
+  hotslot block [<number>] [--rpc <url>] [--probe 4]
+      Explain one block (default: latest): its critical path step by step and the slots that
+      made transactions wait. --probe N root-causes the N hottest slots by replay (0 to skip).
 
   hotslot simulate <scenario.json> [--users 64] [--out data/sim-<name>.json]
       Deploy a contract on a local anvil chain, have N users call it in the same block,
@@ -44,6 +49,13 @@ async function main() {
       probeSamples: Number(values["probe-samples"]),
       concurrency: Number(values.concurrency),
     });
+  } else if (command === "block") {
+    const { values, positionals } = parseArgs({
+      args: rest,
+      allowPositionals: true,
+      options: { rpc: { type: "string", default: DEFAULT_RPC }, probe: { type: "string", default: "4" } },
+    });
+    await block({ rpc: values.rpc, number: positionals[0] ? Number(positionals[0]) : undefined, probe: Number(values.probe) });
   } else if (command === "simulate") {
     const { values, positionals } = parseArgs({
       args: rest,

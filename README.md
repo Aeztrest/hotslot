@@ -108,6 +108,9 @@ pnpm install
 # analyze recent mainnet blocks (any RPC that serves debug_traceBlockByNumber and debug_traceCall works)
 pnpm hotslot scan --blocks 500 --out data/mainnet.json
 
+# explain one block: its critical path step by step, and why each hot slot is hot
+pnpm hotslot block 116172098 --probe 3
+
 # simulate a contract before deploying it
 pnpm hotslot simulate contracts/scenarios/quest-naive.json
 
@@ -129,7 +132,7 @@ one makes (`"$user"` in args becomes the caller's address). See `contracts/scena
 
 ```
 packages/core     analysis engine: tracing, dependency graph, attribution, replay probe, labels
-packages/cli      hotslot scan / hotslot simulate
+packages/cli      hotslot scan / hotslot block / hotslot simulate
 contracts         demo contracts (Foundry) and simulation scenarios
 apps/dashboard    React dashboard over the JSON reports in data/
 data              generated reports
