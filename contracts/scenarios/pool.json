@@ -1,0 +1,8 @@
+{
+  "name": "pool",
+  "description": "64 users buy from a constant-product pool in the same block. Each price depends on the previous buy.",
+  "contract": "MiniPool",
+  "deployValue": "1000",
+  "users": 64,
+  "action": { "signature": "buy(uint256)", "args": ["0"], "value": "1" }
+}

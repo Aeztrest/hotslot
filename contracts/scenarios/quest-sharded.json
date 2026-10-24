@@ -1,0 +1,7 @@
+{
+  "name": "quest-sharded",
+  "description": "Same app, on-chain total kept in 64 shards picked by caller address.",
+  "contract": "QuestSharded",
+  "users": 64,
+  "action": { "signature": "checkIn()", "args": [] }
+}

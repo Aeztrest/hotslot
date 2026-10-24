@@ -1,0 +1,8 @@
+{
+  "name": "@hotslot/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": { "hotslot": "./src/main.ts" },
+  "dependencies": { "@hotslot/core": "workspace:*", "viem": "^2.0.0" }
+}

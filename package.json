@@ -1,0 +1,16 @@
+{
+  "name": "hotslot",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "hotslot": "node packages/cli/src/main.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dashboard": "pnpm --filter dashboard dev",
+    "test": "node --test packages/core/test/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  },
+  "packageManager": "pnpm@10.33.2"
+}

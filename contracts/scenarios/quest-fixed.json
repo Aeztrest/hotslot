@@ -1,0 +1,7 @@
+{
+  "name": "quest-fixed",
+  "description": "Same app, per-player storage only; global stats derived from events.",
+  "contract": "QuestFixed",
+  "users": 64,
+  "action": { "signature": "checkIn()", "args": [] }
+}

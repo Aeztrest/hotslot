@@ -1,0 +1,15 @@
+{
+  "name": "@hotslot/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./explain": "./src/explain.ts",
+    "./report": "./src/report.ts",
+    "./graph": "./src/graph.ts"
+  },
+  "dependencies": {
+    "viem": "^2.0.0"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "name": "quest-naive",
+  "description": "64 players check in during the same block. Global stats are updated on every call.",
+  "contract": "QuestNaive",
+  "users": 64,
+  "action": { "signature": "checkIn()", "args": [] }
+}
