@@ -7,11 +7,11 @@ and tells you whether each conflict is avoidable.
 $ pnpm hotslot scan --blocks 500
 
 Monad mainnet: parallelism lost to shared state
-blocks 116,161,855–116,162,354 · 498 blocks · 6,113 txs · chain 143
+blocks 116,171,670–116,172,169 · 499 blocks · 6,672 txs · chain 143
 
-  conflicted txs        41% had to wait on an earlier tx in the same block
-  parallelism possible  12.28×
-  parallelism actual    3.17×
+  conflicted txs        42% had to wait on an earlier tx in the same block
+  parallelism possible  13.37×
+  parallelism actual    3.20×
 ```
 
 ## The problem
@@ -30,17 +30,17 @@ on Monad were written for Ethereum. Monad keeps full EVM compatibility: no acces
 you name every account a transaction touches), no error, no extra gas, no warning. The parallelism is lost
 silently.
 
-On 498 consecutive mainnet blocks (116,161,855–116,162,354):
+On 499 consecutive mainnet blocks (116,171,670–116,172,169):
 
 | | |
 |---|---|
-| transactions that waited on another tx in the same block | 41% |
-| parallelism available (avg. txs per block) | 12.28× |
-| parallelism achieved (Σ txs ÷ Σ longest chain) | 3.17× |
-| allowed by contract storage conflicts alone | 3.29× |
-| allowed by same-account ordering alone (one sender, several txs) | 4.37× |
+| transactions that waited on another tx in the same block | 42% |
+| parallelism available (avg. txs per block) | 13.37× |
+| parallelism achieved (Σ txs ÷ Σ longest chain) | 3.20× |
+| allowed by contract storage conflicts alone | 3.25× |
+| allowed by same-account ordering alone (one sender, several txs) | 4.35× |
 
-Storage conflicts are the larger limit, and they are the part contract design controls. Removing the storage conflicts of the 6 worst contracts would take storage-limited parallelism from 3.29× to 10.52× on the same blocks. That is an upper bound: it also removes conflicts the root-cause probe classifies as inherent.
+Storage conflicts are the larger limit, and they are the part contract design controls. Removing the storage conflicts of the 6 worst contracts would take storage-limited parallelism from 3.25× to 10.68× on the same blocks. That is an upper bound: it also removes conflicts the root-cause probe classifies as inherent.
 
 ## What hotslot does
 
@@ -69,15 +69,34 @@ Storage conflicts are the larger limit, and they are the part contract design co
 5. **Before you deploy.** `hotslot simulate` deploys a contract on a local anvil chain, has N users call it in
    the same block and runs the same pipeline, naming slots from the Solidity storage layout.
 
-| 64 users, one block | parallelism | hot slots found |
-|---|---|---|
-| `QuestNaive`: global `totalCheckIns`, `lastPlayer`, `lastCheckInAt` | 1.00× | `totalCheckIns` accumulator, `lastPlayer` and `lastCheckInAt` overwrite: all avoidable |
-| `QuestSharded`: total kept in 64 shards picked by address | 21.3× | shard collisions, accumulator |
-| `QuestFixed`: per-player struct, totals derived from events | 64.0× | none |
-| `MiniPool`: constant-product pool | 1.00× | `reserveMon`, `reserveToken`: dependent, inherent |
+| 64 users, one block | per slot | per page (MIP-8) | hot slots found |
+|---|---|---|---|
+| `QuestNaive`: global `totalCheckIns`, `lastPlayer`, `lastCheckInAt` | 1.00× | 1.00× | `totalCheckIns` accumulator, `lastPlayer` and `lastCheckInAt` overwrite: all avoidable |
+| `QuestSharded`: total kept in `uint256[64]` shards picked by address | 21.3× | 1.00× | shard collisions; per page, all 64 shards are on page 0 |
+| `QuestShardedMap`: same shards in a `mapping` | 21.3× | 21.3× | shard collisions only |
+| `QuestFixed`: per-player struct, totals derived from events | 64.0× | 64.0× | none |
+| `MiniPool`: constant-product pool | 1.00× | 1.00× | `reserveMon`, `reserveToken`: dependent, inherent |
 
 The pool is there on purpose: it is as serialized as the naive quest, and hotslot correctly reports that
 nothing about its storage layout can fix that.
+
+## Per slot or per page (MIP-8)
+
+[MIP-8](https://mips.monad.xyz/MIPs/MIP-8) groups storage into pages of 128 consecutive slots
+(`page = slot >> 7`). A page is the unit of disk I/O, of the state commitment and of SLOAD/SSTORE gas. MIP-8 does
+not say whether parallel execution detects conflicts per slot or per page, so hotslot reports both.
+
+If conflicts are per page, two transactions that write *different* slots on the same page still wait for each
+other: false sharing, as with two CPU cores writing different variables on one cache line. On the mainnet range
+above, parallelism is 3.20× per slot and 3.18× per page; 90 of 4227 (2%) page-level waits are false sharing. On today's mainnet the question barely moves the total: the hot contracts already collide on the *same* slots.
+
+The simulations show why it matters for contract design. `QuestSharded` splits its counter into a `uint256[64]`:
+64 consecutive slots, all on page 0. Per slot that gives 21×; per page every shard collides and it is 1×.
+`QuestShardedMap` keeps the same shards in a mapping, whose entries are hashed onto different pages, and stays at
+21× either way. The advice that holds under both models: shard with mappings, not arrays or adjacent variables.
+
+MIP-8's gas model pulls the other way. Later slots on a page already touched in the transaction are warm and cheap,
+so packing hot data onto one page saves gas while concentrating conflicts.
 
 ## Running it
 
@@ -122,6 +141,8 @@ data              generated reports
   transactions change the balance. Account-level conflicts are under-counted rather than invented.
 - Root cause is decided per sampled transaction (3 per slot by default); the most restrictive result wins.
   Two perturbations (+1 and +0x1234567) are tried; a guard far from its limit can look like `unused`.
+- Which granularity Monad's executor uses for conflict detection is not specified by MIP-8; the per-slot figures
+  are the main ones and the per-page figures show the other case.
 - Monad system transactions (gas = 0) and the staking precompile are in the graph because they execute in the
   block, but they are not replayed: overriding a precompile's storage proves nothing.
 

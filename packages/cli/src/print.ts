@@ -25,6 +25,18 @@ export function printReport(r: Report): void {
   const names = new Map(r.contracts.map((c) => [c.address, c.label?.name ?? shortAddr(c.address)]));
   for (const w of s.whatIf) out.push(`    + ${(names.get(w.fixed) ?? shortAddr(w.fixed)).padEnd(28)} → ${x(w.effectiveParallelism)}`);
   out.push("");
+  if (r.pages) {
+    const p = r.pages;
+    out.push(bold("  if conflicts are tracked per MIP-8 page (128 slots) instead of per slot"));
+    out.push(`    parallelism actual    ${x(p.summary.effectiveParallelism)}  ${dim(`(per slot: ${x(s.effectiveParallelism)})`)}`);
+    out.push(`    storage only          ${x(p.summary.storageParallelism)}  ${dim(`(per slot: ${x(s.storageParallelism)})`)}`);
+    out.push(`    false sharing         ${p.falseSharingEdges} of ${p.pageEdges} page-level waits ${dim("(different slots, same page)")}`);
+    for (const f of p.falseSharing.slice(0, 5)) {
+      const name = f.label?.name ?? shortAddr(f.address);
+      out.push(`      ${String(f.waits).padStart(5)} waits  ${name.padEnd(28).slice(0, 28)} ${f.pageLabel}`);
+    }
+    out.push("");
+  }
   out.push(bold("  contracts whose storage makes txs wait"));
   out.push(dim("  steps = critical-path steps removed by fixing this contract alone (0 when it is hot together with another)"));
   out.push("");

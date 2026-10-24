@@ -1,6 +1,8 @@
 import {
   aggregate,
   combineProbes,
+  comparePages,
+  labelPage,
   labelContract,
   labelSlot,
   mapLimit,
@@ -37,7 +39,13 @@ export interface BuildOptions {
   log: (msg: string) => void;
 }
 
-export async function buildReport(rpc: Rpc, analyses: BlockAnalysis[], opts: BuildOptions): Promise<Report> {
+export async function buildReport(
+  rpc: Rpc,
+  analyses: BlockAnalysis[],
+  /** The same blocks analyzed per MIP-8 page instead of per slot. */
+  pageAnalyses: BlockAnalysis[],
+  opts: BuildOptions,
+): Promise<Report> {
   const { summary, hotspots, contracts } = aggregate(analyses);
   const chainId = Number(await rpc.call<string>("eth_chainId", []));
 
@@ -75,6 +83,16 @@ export async function buildReport(rpc: Rpc, analyses: BlockAnalysis[], opts: Bui
 
   const labeledContracts = await mapLimit(contracts.slice(0, 20), 4, async (c) => ({ ...c, label: await label(c.address) }));
 
+  const cmp = comparePages(analyses, pageAnalyses);
+  const pages: Report["pages"] = {
+    ...cmp,
+    falseSharing: await mapLimit(cmp.falseSharing, 4, async (p) => ({
+      ...p,
+      label: await label(p.address),
+      pageLabel: labelPage(p.page, opts.layouts?.get(p.address)),
+    })),
+  };
+
   // Showcase: the busiest blocks, which are the ones where parallelism matters most.
   const showcase = [...analyses].sort((a, b) => b.txCount - a.txCount || a.number - b.number).slice(0, 6);
 
@@ -96,5 +114,6 @@ export async function buildReport(rpc: Rpc, analyses: BlockAnalysis[], opts: Bui
     hotspots: reportHotspots,
     contracts: labeledContracts,
     showcase,
+    pages,
   };
 }

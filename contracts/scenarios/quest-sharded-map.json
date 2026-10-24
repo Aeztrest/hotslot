@@ -1,0 +1,7 @@
+{
+  "name": "quest-sharded-map",
+  "description": "Same as quest-sharded, with the 64 shards in a mapping so they land on different MIP-8 pages.",
+  "contract": "QuestShardedMap",
+  "users": 64,
+  "action": { "signature": "checkIn()", "args": [] }
+}

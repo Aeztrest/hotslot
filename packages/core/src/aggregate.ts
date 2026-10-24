@@ -133,7 +133,7 @@ function greedyFixes(blocks: BlockAnalysis[], candidates: string[], steps: numbe
   const chosen: string[] = [];
   const out: { fixed: string; totalPath: number }[] = [];
   const pathWith = (set: string[]) => {
-    const prefixes = set.map((a) => a + ":0x");
+    const prefixes = set.map((a) => a + ":");
     return sum(blocks, (b) => longestPath(b.txCount, b.edges, (k) => !isStorageKey(k) || prefixes.some((p) => k.startsWith(p))).length);
   };
   let current = pathWith([]);

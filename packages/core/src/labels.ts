@@ -90,3 +90,14 @@ export function shortSlot(slot: string): string {
 export function shortAddr(a: string): string {
   return `${a.slice(0, 6)}…${a.slice(-4)}`;
 }
+
+/** Name a MIP-8 page: which declared variables live on it (simulation mode), else its slot range. */
+export function labelPage(pageHex: string, layout?: LayoutEntry[]): string {
+  const page = BigInt(pageHex);
+  const first = page << 7n;
+  const last = first + 127n;
+  const range = page < 1n << 24n ? `slots ${first}–${last}` : `hashed slots`;
+  if (!layout) return `page ${page < 1n << 24n ? page : pageHex.slice(0, 10) + "…"} (${range})`;
+  const vars = layout.filter((e) => BigInt(e.slot) >= first && BigInt(e.slot) <= last).map((e) => e.label);
+  return `page ${page} (${vars.length ? vars.join(", ") : range})`;
+}

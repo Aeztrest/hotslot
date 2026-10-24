@@ -4,7 +4,7 @@ import type { Report, ReportHotspot, BlockAnalysis, Usage } from "@hotslot/core/
 import { BlockLines, DepGraph, HBars, Row } from "./charts.tsx";
 import { contractName, explorerAddr, explorerTx, int, pct, shortAddr, shortHash, x } from "./format.ts";
 
-export const SIMS = ["quest-naive", "quest-sharded", "quest-fixed", "pool"] as const;
+export const SIMS = ["quest-naive", "quest-sharded", "quest-sharded-map", "quest-fixed", "pool"] as const;
 
 async function load(name: string): Promise<Report | null> {
   const res = await fetch(`/${name}.json`);
@@ -29,6 +29,7 @@ export function App({ initial }: { initial?: { net: Report | null; sims: Report[
       {net && <Network r={net} />}
       {net && <BlockInspector r={net} />}
       {sims.length > 0 && <Simulations sims={sims} />}
+      {(net?.pages || sims.some((s) => s.pages)) && <PageGranularity net={net ?? null} sims={sims} />}
       <Method />
       <footer>
         {net
@@ -381,7 +382,7 @@ function Simulations({ sims }: { sims: Report[] }) {
       <h2>Before you deploy</h2>
       <p className="intro">
         <code>hotslot simulate</code> deploys a contract on a local chain, has N different users call it in the same block, and runs the
-        same analysis, with slot names from the Solidity storage layout. Same app, three storage designs, plus a pool where the conflict
+        same analysis, with slot names from the Solidity storage layout. Same app, four storage designs, plus a pool where the conflict
         is real.
       </p>
       <div className="card">
@@ -421,6 +422,97 @@ function Simulations({ sims }: { sims: Report[] }) {
         <div className="card">
           <h3>Hot slots in {sel.scenario?.contract}</h3>
           <SlotTable r={sel} slots={sel.hotspots.slice(0, 8)} />
+        </div>
+      )}
+    </section>
+  );
+}
+
+function PageGranularity({ net, sims }: { net: Report | null; sims: Report[] }) {
+  const p = net?.pages;
+  return (
+    <section>
+      <h2>Per slot or per page? (MIP-8)</h2>
+      <p className="intro">
+        <a href="https://mips.monad.xyz/MIPs/MIP-8" target="_blank" rel="noreferrer">MIP-8</a> groups storage into pages of 128 consecutive
+        slots: the unit of disk I/O, of the state commitment and of SLOAD/SSTORE gas. It does not say whether parallel execution detects
+        conflicts per slot or per page. If it is per page, two transactions writing <i>different</i> slots on the same page still wait for
+        each other. That is false sharing, the same thing that happens when two CPU cores write different variables on one cache line.
+        Everything above is per slot; this section reruns it per page.
+      </p>
+      {p && net && (
+        <div className="card">
+          <h3>Mainnet, same {int(net.summary.blocks)} blocks</h3>
+          <p className="note">
+            {int(p.falseSharingEdges)} of {int(p.pageEdges)} page-level waits ({pct(p.pageEdges ? p.falseSharingEdges / p.pageEdges : 0)}) exist
+            only at page granularity: the two transactions touched different slots that share a page. On today's mainnet the difference is small: the hot contracts already collide on the same slots. Where granularity decides the outcome is contract design, below.
+          </p>
+          <HBars
+            max={net.summary.idealParallelism}
+            items={[
+              { key: "slot", label: <span>conflicts per slot</span>, value: net.summary.effectiveParallelism, valueLabel: x(net.summary.effectiveParallelism) },
+              { key: "page", label: <span>conflicts per page</span>, value: p.summary.effectiveParallelism, valueLabel: x(p.summary.effectiveParallelism) },
+            ]}
+          />
+          {p.falseSharing.length > 0 && (
+            <table style={{ marginTop: 14 }}>
+              <thead>
+                <tr>
+                  <th>contract</th>
+                  <th>page</th>
+                  <th className="num">false-sharing waits</th>
+                  <th className="num">blocks</th>
+                </tr>
+              </thead>
+              <tbody>
+                {p.falseSharing.slice(0, 8).map((f) => (
+                  <tr key={f.key}>
+                    <td>{contractName(f.address, f.label)}</td>
+                    <td className="mono">{f.pageLabel}</td>
+                    <td className="num">{int(f.waits)}</td>
+                    <td className="num">{int(f.blocks)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+      {sims.some((s) => s.pages) && (
+        <div className="card">
+          <h3>The simulated contracts at both granularities</h3>
+          <p className="note">
+            QuestSharded keeps its 64 shards in a <code>uint256[64]</code>: 64 consecutive slots, all on page 0. Per slot it reaches 21×; per
+            page every shard collides and it is back to 1×. QuestShardedMap keeps the same shards in a mapping, whose entries are hashed onto
+            different pages, and holds 21× either way.
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>contract</th>
+                <th className="num">per slot</th>
+                <th className="num">per page</th>
+                <th>false sharing</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sims.map((s) => (
+                <tr key={s.title}>
+                  <td>{s.scenario?.contract}</td>
+                  <td className="num">{x(s.summary.effectiveParallelism)}</td>
+                  <td className="num">{s.pages ? x(s.pages.summary.effectiveParallelism) : "—"}</td>
+                  <td className="mono">
+                    {s.pages?.falseSharing[0] ? `${s.pages.falseSharingEdges} waits · ${s.pages.falseSharing[0].pageLabel}` : <span className="muted">none</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="note" style={{ marginTop: 14, marginBottom: 0 }}>
+            The design advice that holds at both granularities: shard with mappings, not arrays or adjacent variables. MIP-8's gas model
+            pulls the other way: later slots on an already-touched page are warm and cheap, so packing hot data onto one page saves gas while
+            concentrating conflicts.
+          </p>
         </div>
       )}
     </section>

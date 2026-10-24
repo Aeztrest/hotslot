@@ -6,4 +6,5 @@ export * from "./aggregate.ts";
 export * from "./probe.ts";
 export * from "./labels.ts";
 export * from "./explain.ts";
+export * from "./pages.ts";
 export * from "./report.ts";

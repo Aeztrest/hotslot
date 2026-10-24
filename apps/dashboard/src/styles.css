@@ -110,3 +110,6 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 details summary { cursor: pointer; color: var(--text-secondary); font-size: 13.5px; }
 .limits li { margin-bottom: 6px; color: var(--text-secondary); }
 footer { margin-top: 64px; color: var(--text-muted); font-size: 12.5px; }
+a { color: var(--series-1); text-decoration: none; }
+a:hover { text-decoration: underline; }
+a.muted { color: var(--text-muted); }

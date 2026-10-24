@@ -1,6 +1,6 @@
 import { writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
-import { Rpc, analyzeBlock, fetchBlockAccess, mapLimit, type BlockAnalysis } from "@hotslot/core";
+import { Rpc, analyzeBlock, fetchBlockAccess, mapLimit, toPageAccess, type BlockAnalysis } from "@hotslot/core";
 import { buildReport } from "./build.ts";
 import { printReport } from "./print.ts";
 
@@ -27,7 +27,8 @@ export async function scan(args: ScanArgs): Promise<void> {
     try {
       const { block, txs } = await fetchBlockAccess(rpc, n);
       miners.set(n, block.miner.toLowerCase());
-      return analyzeBlock(n, Number(block.timestamp), txs);
+      const ts = Number(block.timestamp);
+      return { slot: analyzeBlock(n, ts, txs), page: analyzeBlock(n, ts, txs.map(toPageAccess)) };
     } catch (err) {
       log(`  block ${n} skipped: ${(err as Error).message}`);
       return null;
@@ -35,10 +36,12 @@ export async function scan(args: ScanArgs): Promise<void> {
       if (++done % 25 === 0 || done === numbers.length) log(`  ${done}/${numbers.length}`);
     }
   });
-  const analyses = results.filter((r): r is BlockAnalysis => r !== null && r.txCount > 0);
-  if (analyses.length === 0) throw new Error("no blocks with transactions in range");
+  const kept = results.filter((r): r is { slot: BlockAnalysis; page: BlockAnalysis } => r !== null && r.slot.txCount > 0);
+  if (kept.length === 0) throw new Error("no blocks with transactions in range");
+  const analyses = kept.map((r) => r.slot);
+  const pageAnalyses = kept.map((r) => r.page);
 
-  const report = await buildReport(rpc, analyses, {
+  const report = await buildReport(rpc, analyses, pageAnalyses, {
     kind: "network",
     title: "Monad mainnet: parallelism lost to shared state",
     probeTop: args.probeTop,

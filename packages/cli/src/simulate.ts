@@ -2,7 +2,7 @@ import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, resolve, join } from "node:path";
 import { encodeFunctionData, parseAbiItem, parseEther, type AbiFunction, type Hex } from "viem";
-import { Rpc, analyzeBlock, fetchBlockAccess, type LayoutEntry } from "@hotslot/core";
+import { Rpc, analyzeBlock, fetchBlockAccess, toPageAccess, type LayoutEntry } from "@hotslot/core";
 import { buildReport } from "./build.ts";
 import { printReport } from "./print.ts";
 
@@ -89,7 +89,8 @@ export async function simulate(opts: { scenario: string; users?: number; out?: s
     log(`mined ${users} calls in block ${blockNumber}`);
 
     const analysis = analyzeBlock(blockNumber, Number(block.timestamp), txs);
-    const report = await buildReport(rpc, [analysis], {
+    const pageAnalysis = analyzeBlock(blockNumber, Number(block.timestamp), txs.map(toPageAccess));
+    const report = await buildReport(rpc, [analysis], [pageAnalysis], {
       kind: "simulation",
       title: `${scenario.contract}: ${users} users in one block`,
       probeTop: 3,
