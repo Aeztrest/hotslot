@@ -118,6 +118,10 @@ pnpm test        # unit tests for the graph and attribution logic
 pnpm typecheck
 ```
 
+The dashboard is a static site. `vercel.json` builds it from the repo root (`pnpm --filter dashboard build`,
+output `apps/dashboard/dist`), with the reports in `data/` bundled in. Import the repo on Vercel as is; no
+environment variables are needed.
+
 A scenario is a small JSON file naming a contract in `contracts/src`, the number of users, and the call each
 one makes (`"$user"` in args becomes the caller's address). See `contracts/scenarios/`.
 
