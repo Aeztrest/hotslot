@@ -113,25 +113,43 @@ export async function probeSlot(
     } catch (err) {
       return { hash: tx.hash, usage: null, skipped: `perturbed replay failed: ${(err as Error).message}` };
     }
-    let usage: Usage;
-    if (p.reverted) {
-      usage = "guard";
-    } else {
-      const diff = differingKeys(base.writes, p.writes, (k) => k === target || ignore.has(k));
-      const w0 = base.writes.get(target) ?? v0;
-      const w1 = p.writes.get(target) ?? v1;
-      if (diff.length > 0) {
-        usage = "dependent";
-        affected = diff;
-      } else if (w0 === v0 && w1 === v1) usage = "unused";
-      else if (w0 === w1) usage = "overwrite";
-      else if (mod(w1 - v1) === mod(w0 - v0)) usage = "accumulator";
-      else usage = "dependent"; // e.g. x = max(x, y) or x = x * k: result depends on the old value
-    }
+    const verdict = classifyPerturbation(base, p, target, v0, v1, ignore);
+    const usage = verdict.usage;
+    if (verdict.affected.length) affected = verdict.affected;
     if (p.logs !== base.logs || p.output !== base.output) observable = true;
     if (USAGE_RANK[usage] > USAGE_RANK[worst]) worst = usage;
   }
   return { hash: tx.hash, usage: worst, affectedKeys: affected.length ? affected : undefined, observable };
+}
+
+/** The effects of one replay that the classification compares. */
+export interface ReplayEffects {
+  reverted: boolean;
+  writes: Map<StateKey, bigint>;
+}
+
+/**
+ * Decide how a tx uses `target` from two replays: `base` with the slot at its real value `v0`, and
+ * `perturbed` with only that slot changed to `v1`. Keys in `ignore` (gas payment) are not compared.
+ */
+export function classifyPerturbation(
+  base: ReplayEffects,
+  perturbed: ReplayEffects,
+  target: StateKey,
+  v0: bigint,
+  v1: bigint,
+  ignore: ReadonlySet<StateKey> = new Set(),
+): { usage: Usage; affected: StateKey[] } {
+  if (perturbed.reverted) return { usage: "guard", affected: [] };
+  const affected = differingKeys(base.writes, perturbed.writes, (k) => k === target || ignore.has(k));
+  if (affected.length > 0) return { usage: "dependent", affected };
+  const w0 = base.writes.get(target) ?? v0;
+  const w1 = perturbed.writes.get(target) ?? v1;
+  if (w0 === v0 && w1 === v1) return { usage: "unused", affected };
+  if (w0 === w1) return { usage: "overwrite", affected };
+  if (mod(w1 - v1) === mod(w0 - v0)) return { usage: "accumulator", affected };
+  // The new value depends on the old one in a non-additive way, e.g. x = max(x, y) or x = x * k.
+  return { usage: "dependent", affected };
 }
 
 type Overrides = Record<string, { stateDiff?: Record<string, string>; balance?: string; nonce?: string; code?: string }>;
