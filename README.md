@@ -1,5 +1,7 @@
 # hotslot
 
+**English** · [Türkçe](README.tr.md)
+
 Finds the storage slots that stop Monad from running transactions in parallel, measures what they cost,
 and tells you whether each conflict is avoidable.
 
@@ -117,7 +119,7 @@ pnpm hotslot simulate contracts/scenarios/quest-naive.json
 # dashboard over everything in data/
 pnpm dashboard
 
-pnpm test        # unit tests for the graph and attribution logic
+pnpm test        # unit tests for the graph, attribution and root-cause classification
 pnpm typecheck
 ```
 
