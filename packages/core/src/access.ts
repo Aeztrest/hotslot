@@ -1,3 +1,4 @@
+import { estimateCost, type StorageChange } from "./cost.ts";
 import { accountKey, storageKey, type StateKey } from "./keys.ts";
 import type { Rpc } from "./rpc.ts";
 
@@ -20,6 +21,8 @@ export interface RawTx {
   gasPrice?: string;
   maxFeePerGas?: string;
   maxPriorityFeePerGas?: string;
+  accessList?: { address: string; storageKeys: string[] }[];
+  authorizationList?: unknown[];
 }
 
 export interface RawBlock {
@@ -44,6 +47,14 @@ export interface TxAccess {
   reads: Set<StateKey>;
   /** Keys whose value this tx actually changed. Writes of an identical value are not counted. */
   writes: Set<StateKey>;
+  /**
+   * Estimated execution gas: Monad's state-access schedule applied to what the tx touched (see cost.ts).
+   * A lower bound on gas used; Monad's receipts only report the gas limit.
+   */
+  cost: number;
+  gasLimit: number;
+  /** Every account the tx touched (called, read or changed), lowercase. */
+  accounts?: string[];
 }
 
 /**
@@ -81,6 +92,8 @@ export function buildAccess(
 ): TxAccess {
   const reads = new Set<StateKey>();
   const writes = new Set<StateKey>();
+  const changes: StorageChange[] = [];
+  const created = new Set<string>();
 
   for (const [addr, acc] of Object.entries(touched)) {
     for (const slot of Object.keys(acc.storage ?? {})) reads.add(storageKey(addr, slot));
@@ -92,11 +105,17 @@ export function buildAccess(
     // so counting it would make every pair of transactions look dependent.
     if (address === feeRecipient) continue;
     const pre = diff.pre[addr] ?? {};
+    // New code on an account that had none: created in this tx (CREATE/CREATE2) or given a 7702 delegation.
+    if (post.code !== undefined && post.code !== "0x" && !pre.code) created.add(address);
     for (const [slot, value] of Object.entries(post.storage ?? {})) {
       // Some tracers omit an unchanged slot from `pre` but still list it in `post`; fall back to the
       // non-diff prestate, which always has the value the tx started from.
-      const before = pre.storage?.[slot] ?? touched[addr]?.storage?.[slot] ?? "0x0";
-      if (BigInt(value) !== BigInt(before)) writes.add(storageKey(addr, slot));
+      const before = BigInt(pre.storage?.[slot] ?? touched[addr]?.storage?.[slot] ?? "0x0");
+      const after = BigInt(value);
+      if (after !== before) {
+        writes.add(storageKey(addr, slot));
+        changes.push({ address, slot, before, after });
+      }
     }
     // Balance/nonce: a changed account was read-modify-written. We deliberately do not treat a mere
     // appearance in the touched set as a balance read (a CALL into a contract lists it there too), so
@@ -121,6 +140,18 @@ export function buildAccess(
   reads.add(accountKey(tx.from, "nonce"));
   writes.add(accountKey(tx.from, "nonce"));
 
+  const cost = estimateCost({
+    from: tx.from,
+    to: tx.to,
+    input: tx.input,
+    accessList: tx.accessList,
+    authorizationList: tx.authorizationList,
+    touched,
+    changes,
+    created,
+    feeRecipient,
+  }).total;
+
   return {
     index,
     hash: tx.hash,
@@ -129,5 +160,8 @@ export function buildAccess(
     system: BigInt(tx.gas) === 0n,
     reads,
     writes,
+    cost,
+    gasLimit: Number(BigInt(tx.gas)),
+    accounts: Object.keys(touched).map((a) => a.toLowerCase()),
   };
 }

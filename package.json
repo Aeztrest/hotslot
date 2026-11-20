@@ -1,6 +1,7 @@
 {
-  "name": "hotslot",
+  "name": "hotslot-monorepo",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "hotslot": "node packages/cli/src/main.ts",

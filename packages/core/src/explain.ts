@@ -33,3 +33,13 @@ export const USAGE_INFO: Record<Usage, { title: string; avoidable: boolean; why:
     fix: "Inherent to the logic. It can only be reduced by batching: collect requests and settle them per block or epoch.",
   },
 };
+
+/**
+ * Not a storage slot, so never replayed: a native MON balance that txs from different senders all change
+ * (payments into one contract or address). Each tx starts from the balance the previous one left.
+ */
+export const BALANCE_INFO = {
+  title: "Shared MON balance",
+  why: "Transactions from different senders all send MON into (or out of) this account, so each one changes the balance the next one starts from.",
+  fix: "Have users prefund once (deposit) and debit an internal per-user balance per action, and pay out with pull-based withdrawals, so most transactions move no MON.",
+} as const;

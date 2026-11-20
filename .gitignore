@@ -5,3 +5,4 @@ contracts/lib
 dist
 .DS_Store
 apps/dashboard/dist
+hotslot-reports

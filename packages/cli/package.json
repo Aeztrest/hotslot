@@ -1,8 +1,38 @@
 {
-  "name": "@hotslot/cli",
-  "version": "0.1.0",
-  "private": true,
+  "name": "hotslot",
+  "version": "0.2.0",
+  "description": "Find the storage slots and shared balances that stop Monad from running your transactions in parallel",
   "type": "module",
-  "bin": { "hotslot": "./src/main.ts" },
-  "dependencies": { "@hotslot/core": "workspace:*", "viem": "^2.0.0" }
+  "bin": {
+    "hotslot": "./dist/hotslot.mjs"
+  },
+  "files": [
+    "dist"
+  ],
+  "license": "MIT",
+  "homepage": "https://github.com/Aeztrest/hotslot#readme",
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "monad",
+    "parallel-execution",
+    "evm",
+    "solidity",
+    "foundry",
+    "storage"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Aeztrest/hotslot.git"
+  },
+  "scripts": {
+    "build": "esbuild src/main.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/hotslot.mjs --banner:js=\"import { createRequire as __hotslotRequire } from 'node:module'; const require = __hotslotRequire(import.meta.url);\"",
+    "prepack": "pnpm run build"
+  },
+  "devDependencies": {
+    "@hotslot/core": "workspace:*",
+    "esbuild": "0.25.10",
+    "viem": "^2.0.0"
+  }
 }

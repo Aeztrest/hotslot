@@ -43,7 +43,7 @@ export interface FalseSharingPage {
 export interface PageComparison {
   /** Same metrics as the slot-level summary, computed with page-level conflicts. */
   summary: Summary;
-  blocks: { number: number; pathLength: number; storagePathLength: number }[];
+  blocks: { number: number; pathLength: number; storagePathLength: number; pathCost: number; storagePathCost: number }[];
   /** Waits (edges) at page level, and how many of them do not exist at slot level. */
   pageEdges: number;
   falseSharingEdges: number;
@@ -89,7 +89,13 @@ export function comparePages(slotBlocks: BlockAnalysis[], pageBlocks: BlockAnaly
 
   return {
     summary: aggregate(pageBlocks).summary,
-    blocks: pageBlocks.map((b) => ({ number: b.number, pathLength: b.pathLength, storagePathLength: b.storagePathLength })),
+    blocks: pageBlocks.map((b) => ({
+      number: b.number,
+      pathLength: b.pathLength,
+      storagePathLength: b.storagePathLength,
+      pathCost: b.pathCost,
+      storagePathCost: b.storagePathCost,
+    })),
     pageEdges,
     falseSharingEdges,
     falseSharing: [...pages.values()].sort((a, b) => b.waits - a.waits).slice(0, 30),

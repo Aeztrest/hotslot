@@ -1,6 +1,7 @@
 export * from "./rpc.ts";
 export * from "./keys.ts";
 export * from "./access.ts";
+export * from "./cost.ts";
 export * from "./graph.ts";
 export * from "./aggregate.ts";
 export * from "./probe.ts";

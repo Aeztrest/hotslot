@@ -7,7 +7,7 @@ import type { TxAccess } from "../src/access.ts";
 const A = "0x00000000000000000000000000000000000000aa";
 const key = (n: bigint) => `${A}:0x${n.toString(16).padStart(64, "0")}`;
 const tx = (index: number, writes: string[]): TxAccess => ({
-  index, hash: `0x${index}`, from: `u${index}`, to: A, system: false, reads: new Set(writes), writes: new Set(writes),
+  index, hash: `0x${index}`, from: `u${index}`, to: A, system: false, reads: new Set(writes), writes: new Set(writes), cost: 1, gasLimit: 1,
 });
 
 test("128 consecutive slots share a page", () => {

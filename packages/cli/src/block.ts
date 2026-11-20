@@ -4,7 +4,10 @@ import {
   USAGE_INFO,
   analyzeBlock,
   fetchBlockAccess,
+  isPrecompile,
   isStorageKey,
+  keyKind,
+  BALANCE_INFO,
   labelContract,
   mapLimit,
   parseKey,
@@ -18,6 +21,7 @@ import {
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;
 const green = (s: string) => `\x1b[32m${s}\x1b[0m`;
+const mgas = (gas: number) => `${(gas / 1e6).toFixed(2)}M gas`;
 
 /** Explain one block: its critical path, step by step, and the slots that made txs wait. */
 export async function block(opts: { rpc: string; number?: number; probe: number }): Promise<void> {
@@ -38,14 +42,21 @@ export async function block(opts: { rpc: string; number?: number; probe: number 
   const keyName = (k: StateKey) => {
     const { address, slot } = parseKey(k);
     const who = names.get(address) ?? shortAddr(address);
-    return isStorageKey(k) ? `${who} ${shortSlot(slot)}` : `${who} ${slot}`;
+    if (isStorageKey(k)) return `${who} ${shortSlot(slot)}`;
+    return slot === "balance" ? `${who} MON balance` : `${who} nonce`;
   };
 
   const out: string[] = [""];
   out.push(bold(`block ${n.toLocaleString("en-US")}`) + dim(` · ${a.txCount} txs · chain ${await rpc.call<string>("eth_chainId", []).then(Number)}`));
   out.push(`  longest dependency chain  ${bold(String(a.pathLength))} of ${a.txCount} txs → parallelism ${bold((a.txCount / Math.max(1, a.pathLength)).toFixed(2) + "x")}`);
+  out.push(
+    `  gas-weighted              ${bold((a.totalCost / Math.max(1, a.pathCost)).toFixed(2) + "x")}` +
+      dim(`  heaviest chain ${mgas(a.pathCost)} over ${a.costCriticalPath.length} txs, of ${mgas(a.totalCost)} in the block; no-conflict limit ${(a.totalCost / Math.max(1, a.maxTxCost)).toFixed(2)}x`),
+  );
   out.push(`  txs that waited           ${a.conflictedTxs}`);
-  out.push(`  storage-only chain        ${a.storagePathLength}   ${dim("same-account-only chain")} ${a.accountPathLength}   ${dim("per MIP-8 page")} ${pages.pathLength}`);
+  out.push(
+    `  chain from storage only   ${a.storagePathLength}   ${dim("shared MON balances only")} ${a.balancePathLength}   ${dim("same-sender order only")} ${a.noncePathLength}   ${dim("per MIP-8 page")} ${pages.pathLength}`,
+  );
   out.push("");
 
   if (a.criticalPath.length > 1) {
@@ -68,15 +79,16 @@ export async function block(opts: { rpc: string; number?: number; probe: number 
   }
 
   const waits = new Map<StateKey, number[]>();
-  for (const e of a.edges) for (const k of e.keys) if (isStorageKey(k)) (waits.get(k) ?? waits.set(k, []).get(k)!).push(e.to);
+  for (const e of a.edges) for (const k of e.keys) if (keyKind(k) !== "nonce") (waits.get(k) ?? waits.set(k, []).get(k)!).push(e.to);
   const hot = [...waits].sort((x, y) => y[1].length - x[1].length).slice(0, 8);
   if (hot.length) {
-    out.push(bold("  storage slots that made txs wait"));
+    out.push(bold("  state that made txs wait"));
     const verdicts = new Map<StateKey, string>();
     if (opts.probe > 0) {
       await mapLimit(hot.slice(0, opts.probe), 3, async ([k, waiters]) => {
         const { address, slot } = parseKey(k);
-        if (BigInt(address) < 0x10000n) return verdicts.set(k, dim("precompile, not replayed"));
+        if (keyKind(k) === "balance") return verdicts.set(k, BALANCE_INFO.title);
+        if (isPrecompile(address)) return verdicts.set(k, dim("precompile, not replayed"));
         const txIndex = waiters[0];
         const raw = block.transactions[txIndex];
         const r = await probeSlot(rpc, raw, n, txIndex, address, slot, block.miner.toLowerCase());

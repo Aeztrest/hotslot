@@ -1,35 +1,61 @@
-import { AVOIDABLE, USAGE_INFO, shortAddr, type Report } from "@hotslot/core";
+import { AVOIDABLE, BALANCE_INFO, USAGE_INFO, shortAddr, type Report, type Usage } from "@hotslot/core";
 
-const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
-const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;
-const red = (s: string) => `\x1b[31m${s}\x1b[0m`;
-const green = (s: string) => `\x1b[32m${s}\x1b[0m`;
+const color = process.stdout.isTTY && !process.env.NO_COLOR;
+const wrap = (code: string) => (s: string) => (color ? `\x1b[${code}m${s}\x1b[0m` : s);
+const dim = wrap("2");
+const bold = wrap("1");
+const red = wrap("31");
+const green = wrap("32");
 
 export function printReport(r: Report): void {
   const s = r.summary;
   const out: string[] = [];
+  const names = new Map(r.contracts.map((c) => [c.address, c.label?.name ?? shortAddr(c.address)]));
   out.push("");
   out.push(bold(r.title));
   out.push(dim(`blocks ${s.firstBlock}–${s.lastBlock} · ${s.blocks} blocks · ${s.txs} txs · chain ${r.chainId}`));
   out.push("");
-  out.push(`  conflicted txs        ${pct(s.conflictedShare)} had to wait on an earlier tx in the same block`);
-  out.push(`  parallelism possible  ${x(s.idealParallelism)}  ${dim("(no conflicts: every tx runs at once)")}`);
-  out.push(`  parallelism actual    ${bold(x(s.effectiveParallelism))}  ${dim("(Σ txs / Σ longest dependency chain)")}`);
-  out.push(`  lost                  ${red(pct(1 - s.effectiveParallelism / s.idealParallelism))} of the available parallelism`);
+  out.push(`  txs that waited       ${pct(s.conflictedShare)} had to wait on an earlier tx in the same block`);
+  out.push(`  parallelism           ${bold(x(s.effectiveParallelism))} of ${x(s.idealParallelism)} possible  ${red(`(${pct(1 - s.effectiveParallelism / s.idealParallelism)} lost)`)}`);
+  out.push(`  gas-weighted          ${bold(x(s.costParallelism))} of ${x(s.idealCostParallelism)} possible  ${dim("(each tx weighted by its estimated gas)")}`);
   out.push("");
-  out.push("  limited by:");
-  out.push(`    contract storage only     ${x(s.storageParallelism)}  ${dim("(what contract design controls)")}`);
-  out.push(`    same-account txs only     ${x(s.accountParallelism)}  ${dim("(one sender's txs run in nonce order; nothing to fix)")}`);
+  if (r.focus) {
+    const f = r.focus;
+    const fname = f.label?.name ?? shortAddr(f.address);
+    out.push(bold(`  ${fname} (${f.address})`));
+    if (f.txsTo === 0) out.push(dim("    no transaction used it in this range"));
+    else {
+      out.push(`    txs that used it      ${f.txsTo}, of which ${bold(pct(f.waitedTo / f.txsTo))} waited on an earlier tx`);
+      if (f.blockedBy.length) {
+        out.push(`    they waited on        ${f.blockedBy.slice(0, 5).map((b) => `${b.address === "sender" ? "their sender's earlier txs" : b.address === f.address ? "its own state" : b.label?.name ?? shortAddr(b.address)} ${b.waits}`).join(dim(" · "))}`);
+      }
+    }
+    out.push(`    waits on its state    ${f.waitsOnItsState} across the range ${dim("(its slots and MON balance, any caller)")}`);
+    out.push(`    if it were fixed      network ${x(s.effectiveParallelism)} → ${bold(x(f.parallelismIfFixed))}  ${dim(`gas-weighted ${x(s.costParallelism)} → ${x(f.costParallelismIfFixed)}`)}`);
+    if (f.withPartner) {
+      const p = f.withPartner;
+      out.push(
+        `    fixed together with ${p.label?.name ?? shortAddr(p.address)}: network ${x(s.effectiveParallelism)} → ${bold(x(p.parallelism))}  ${dim(`gas-weighted ${x(s.costParallelism)} → ${x(p.costParallelism)}; the same txs wait on both`)}`,
+      );
+    }
+    out.push("");
+  }
+  out.push(`  what limits it  ${dim("(parallelism each kind of dependency would allow on its own)")}`);
+  out.push(`    contract storage        ${x(s.storageParallelism).padEnd(8)} ${dim("shared slots: contract design")}`);
+  out.push(`    shared MON balances     ${x(s.balanceParallelism).padEnd(8)} ${dim("many senders paying into one account: contract design")}`);
+  out.push(`    same-sender order       ${x(s.nonceParallelism).padEnd(8)} ${dim("one sender's txs run in nonce order: not a contract issue")}`);
   out.push("");
-  out.push(`  storage parallelism as contracts are fixed (from ${x(s.storageParallelism)}, each step picks the fix that helps most):`);
-  const names = new Map(r.contracts.map((c) => [c.address, c.label?.name ?? shortAddr(c.address)]));
-  for (const w of s.whatIf) out.push(`    + ${(names.get(w.fixed) ?? shortAddr(w.fixed)).padEnd(28)} → ${x(w.effectiveParallelism)}`);
-  out.push("");
+  if (s.whatIf.length) {
+    out.push(`  if the worst contracts were fixed  ${dim(`(from ${x(s.effectiveParallelism)}; their slots and MON balance stop conflicting, everything else stays)`)}`);
+    for (const w of s.whatIf) {
+      out.push(`    + ${(names.get(w.fixed) ?? shortAddr(w.fixed)).padEnd(28).slice(0, 28)} → ${x(w.effectiveParallelism).padEnd(8)} ${dim(`gas-weighted ${x(w.costParallelism)}`)}`);
+    }
+    out.push("");
+  }
   if (r.pages) {
     const p = r.pages;
-    out.push(bold("  if conflicts are tracked per MIP-8 page (128 slots) instead of per slot"));
-    out.push(`    parallelism actual    ${x(p.summary.effectiveParallelism)}  ${dim(`(per slot: ${x(s.effectiveParallelism)})`)}`);
-    out.push(`    storage only          ${x(p.summary.storageParallelism)}  ${dim(`(per slot: ${x(s.storageParallelism)})`)}`);
+    out.push(`  if conflicts are tracked per MIP-8 page (128 slots) instead of per slot`);
+    out.push(`    parallelism           ${x(p.summary.effectiveParallelism)}  ${dim(`(per slot: ${x(s.effectiveParallelism)})`)}`);
     out.push(`    false sharing         ${p.falseSharingEdges} of ${p.pageEdges} page-level waits ${dim("(different slots, same page)")}`);
     for (const f of p.falseSharing.slice(0, 5)) {
       const name = f.label?.name ?? shortAddr(f.address);
@@ -37,23 +63,45 @@ export function printReport(r: Report): void {
     }
     out.push("");
   }
-  out.push(bold("  contracts whose storage makes txs wait"));
-  out.push(dim("  steps = critical-path steps removed by fixing this contract alone (0 when it is hot together with another)"));
-  out.push("");
-  for (const c of r.contracts.slice(0, 8)) {
-    const name = c.label?.name ? `${c.label.name}${c.label.symbol ? ` (${c.label.symbol})` : ""}` : shortAddr(c.address);
-    out.push(`  ${String(c.stepsAdded).padStart(5)} steps  ${String(c.waits).padStart(5)} waits  ${String(c.keys).padStart(3)} hot slots  ${name}`);
+  if (r.contracts.length) {
+    out.push(bold("  contracts whose state makes txs wait"));
+    out.push(dim("  steps = sequential steps removed by fixing this contract alone (0 when it is hot together with another)"));
+    for (const c of r.contracts.slice(0, 8)) {
+      const name = c.label?.name ? `${c.label.name}${c.label.symbol ? ` (${c.label.symbol})` : ""}` : shortAddr(c.address);
+      const viaBalance = c.balanceWaits ? dim(`  ${c.balanceWaits} via MON balance`) : "";
+      out.push(`  ${String(c.stepsAdded).padStart(6)} steps  ${String(c.waits).padStart(6)} waits  ${String(c.keys).padStart(3)} hot slots  ${name}${viaBalance}`);
+    }
+    out.push("");
   }
-  out.push("");
-  out.push(bold("  hottest storage slots and why they are hot"));
-  out.push("");
-  for (const h of r.hotspots.slice(0, 12)) {
-    const name = h.label?.name ? `${h.label.name}${h.label.symbol ? ` (${h.label.symbol})` : ""}` : shortAddr(h.address);
-    const usage = h.probe?.usage;
-    const verdict = usage ? (AVOIDABLE.has(usage) ? green(`${USAGE_INFO[usage].title} · avoidable`) : `${USAGE_INFO[usage].title} · inherent`) : dim(h.probe ? "unclassified" : "");
-    out.push(`  ${String(h.waits).padStart(5)} waits  ${name.padEnd(28).slice(0, 28)} ${h.slotLabel.padEnd(24).slice(0, 24)} ${verdict}`);
+  const hot = r.hotspots.slice(0, 12);
+  if (hot.length) {
+    out.push(bold("  hottest state and why it is hot"));
+    const seen = new Set<string>();
+    for (const h of hot) {
+      const name = h.label?.name ? `${h.label.name}${h.label.symbol ? ` (${h.label.symbol})` : ""}` : shortAddr(h.address);
+      let verdict = "";
+      if (h.kind === "balance") {
+        verdict = green(`${BALANCE_INFO.title} · fixable by design`);
+        seen.add("balance");
+      } else if (h.probe?.usage) {
+        const u = h.probe.usage;
+        verdict = AVOIDABLE.has(u) ? green(`${USAGE_INFO[u].title} · avoidable`) : `${USAGE_INFO[u].title} · inherent`;
+        seen.add(u);
+      } else if (h.probe) verdict = dim("unclassified");
+      else if (BigInt(h.address) < 0x10000n) verdict = dim("system precompile, not replayed");
+      else verdict = dim("not replayed");
+      out.push(`  ${String(h.waits).padStart(6)} waits  ${name.padEnd(28).slice(0, 28)} ${h.slotLabel.padEnd(26).slice(0, 26)} ${verdict}`);
+    }
+    out.push("");
+    if (seen.size) {
+      out.push(bold("  how to fix"));
+      for (const k of seen) {
+        const info = k === "balance" ? BALANCE_INFO : USAGE_INFO[k as Usage];
+        out.push(`    ${info.title}: ${dim(info.fix)}`);
+      }
+      out.push("");
+    }
   }
-  out.push("");
   console.log(out.join("\n"));
 }
 

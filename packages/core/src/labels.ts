@@ -56,8 +56,8 @@ export interface LayoutEntry {
 }
 
 /**
- * Name a slot. Uses a Solidity storage layout if we have one (simulation mode), resolving
- * `mapping(address => ...)` entries for a set of known keys (the simulated users).
+ * Name a slot. Uses a Solidity storage layout if we have one (simulation mode), resolving mapping
+ * entries for a set of known keys (the simulated users and the scenario's call arguments).
  */
 export function labelSlot(slot: string, layout?: LayoutEntry[], mappingKeys: string[] = []): string {
   const s = normalizeWord(slot);
@@ -71,14 +71,61 @@ export function labelSlot(slot: string, layout?: LayoutEntry[], mappingKeys: str
     const m = /^t_array\(t_u?int256\)(\d+)_storage$/.exec(e.type);
     if (m && v > BigInt(e.slot) && v < BigInt(e.slot) + BigInt(m[1])) return `${e.label}[${v - BigInt(e.slot)}]`;
   }
+  // Mappings, one or two levels deep (mapping(K1 => V) and mapping(K1 => mapping(K2 => V))), tried with
+  // every candidate key whose shape fits the key type.
   for (const e of layout) {
-    if (!e.type.startsWith("t_mapping(t_address")) continue;
-    for (const k of mappingKeys) {
-      const derived = keccak256(encodeAbiParameters([{ type: "address" }, { type: "uint256" }], [k as Hex, BigInt(e.slot)]));
-      if (normalizeWord(derived) === s) return `${e.label}[${k.slice(0, 8)}…]`;
+    const keyTypes = mappingKeyTypes(e.type);
+    if (!keyTypes.length) continue;
+    const base = BigInt(e.slot);
+    for (const k1 of mappingKeys) {
+      const s1 = mappingSlot(keyTypes[0], k1, base);
+      if (s1 === null) continue;
+      if (normalizeWord(s1) === s) return `${e.label}[${showKey(k1)}]`;
+      if (keyTypes.length < 2) continue;
+      for (const k2 of mappingKeys) {
+        const s2 = mappingSlot(keyTypes[1], k2, BigInt(s1));
+        if (s2 !== null && normalizeWord(s2) === s) return `${e.label}[${showKey(k1)}][${showKey(k2)}]`;
+      }
     }
   }
   return shortSlot(s);
+}
+
+/** Key types of a (possibly nested) mapping type id, e.g. t_mapping(t_uint64,t_mapping(t_address,t_uint256)). */
+function mappingKeyTypes(type: string): string[] {
+  const out: string[] = [];
+  let t = type;
+  while (t.startsWith("t_mapping(") && out.length < 2) {
+    const inner = t.slice("t_mapping(".length, -1);
+    const comma = inner.indexOf(",");
+    out.push(inner.slice(0, comma));
+    t = inner.slice(comma + 1);
+  }
+  return out;
+}
+
+/** keccak256(key . slot) for a value-type key, or null when the candidate does not fit the key type. */
+function mappingSlot(keyType: string, key: string, slot: bigint): Hex | null {
+  const isAddress = /^0x[0-9a-fA-F]{40}$/.test(key);
+  if (keyType === "t_address" || keyType.startsWith("t_contract")) {
+    return isAddress ? keccak256(encodeAbiParameters([{ type: "address" }, { type: "uint256" }], [key as Hex, slot])) : null;
+  }
+  if (/^t_u?int\d+$/.test(keyType) || keyType === "t_bytes32") {
+    if (isAddress) return null;
+    let v: bigint;
+    try {
+      v = BigInt(key);
+    } catch {
+      return null;
+    }
+    if (v < 0n || v >= 1n << 256n) return null;
+    return keccak256(encodeAbiParameters([{ type: "uint256" }, { type: "uint256" }], [v, slot]));
+  }
+  return null;
+}
+
+function showKey(k: string): string {
+  return /^0x[0-9a-fA-F]{40}$/.test(k) ? `${k.slice(0, 8)}…` : k;
 }
 
 export function shortSlot(slot: string): string {
