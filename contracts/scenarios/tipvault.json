@@ -1,0 +1,11 @@
+{
+  "name": "tipvault",
+  "description": "Modeled on the busiest pattern on Monad mainnet: 48 searchers pay a MON tip to the same validator and 16 stakers deposit, all in one block. Tips and deposits land in one contract balance and a few shared totals.",
+  "contract": "TipVault",
+  "deployValue": "100",
+  "users": 64,
+  "actions": [
+    { "signature": "bid(uint64)", "args": ["7"], "value": "0.07", "weight": 3 },
+    { "signature": "deposit()", "value": "1", "weight": 1 }
+  ]
+}

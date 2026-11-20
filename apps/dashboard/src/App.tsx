@@ -2,9 +2,9 @@ import { Fragment, useEffect, useState } from "react";
 import { USAGE_INFO } from "@hotslot/core/explain";
 import type { Report, ReportHotspot, BlockAnalysis, Usage } from "@hotslot/core/report";
 import { BlockLines, DepGraph, HBars, Row } from "./charts.tsx";
-import { contractName, explorerAddr, explorerTx, int, pct, shortAddr, shortHash, x } from "./format.ts";
+import { contractName, explorerAddr, explorerTx, int, mgas, pct, shortAddr, shortHash, x } from "./format.ts";
 
-export const SIMS = ["quest-naive", "quest-sharded", "quest-sharded-map", "quest-fixed", "pool"] as const;
+export const SIMS = ["quest-naive", "quest-sharded", "quest-sharded-map", "quest-fixed", "pool", "tipvault", "tipvault-escrow"] as const;
 
 async function load(name: string): Promise<Report | null> {
   const res = await fetch(`/${name}.json`);
@@ -68,7 +68,10 @@ function Hero({ net }: { net: Report | null }) {
           <div className="tile">
             <div className="label">Parallelism achieved</div>
             <div className="value">{x(s.effectiveParallelism)}</div>
-            <div className="foot">Σ transactions ÷ Σ longest dependency chain, {int(s.blocks)} blocks</div>
+            <div className="foot">
+              Σ transactions ÷ Σ longest dependency chain, {int(s.blocks)} blocks. Weighted by gas: {x(s.costParallelism)} of{" "}
+              {x(s.idealCostParallelism)}
+            </div>
           </div>
           <div className="tile">
             <div className="label">Transactions that waited</div>
@@ -76,12 +79,12 @@ function Hero({ net }: { net: Report | null }) {
             <div className="foot">read a slot an earlier transaction in the block had written</div>
           </div>
           <div className="tile">
-            <div className="label">Allowed by contract storage alone</div>
-            <div className="value">{x(s.storageParallelism)}</div>
+            <div className="label">After fixing the worst contracts</div>
+            <div className="value">{x(s.whatIf.at(-1)?.effectiveParallelism ?? s.effectiveParallelism)}</div>
             <div className="foot">
               {s.whatIf.length > 0
-                ? `${x(s.whatIf.at(-1)!.effectiveParallelism)} after fixing ${s.whatIf.length} contracts`
-                : "the part contract design controls"}
+                ? `${s.whatIf.length} contracts' storage and MON-balance conflicts removed; everything else kept`
+                : "no contract conflicts to fix"}
             </div>
           </div>
         </div>
@@ -123,11 +126,12 @@ function WhyItHappens() {
 function Network({ r }: { r: Report }) {
   const s = r.summary;
   const names = new Map(r.contracts.map((c) => [c.address, contractName(c.address, c.label)]));
-  const base = { key: "now", label: <span className="secondary">storage conflicts today</span>, value: s.storageParallelism, valueLabel: x(s.storageParallelism), muted: true };
+  const base = { key: "now", label: <span className="secondary">today</span>, value: s.effectiveParallelism, valueLabel: x(s.effectiveParallelism), muted: true };
   const kinds = [
     { key: "all", label: <span>all dependencies</span>, value: s.effectiveParallelism, valueLabel: x(s.effectiveParallelism), tip: <Row k="what blocks achieve" v={x(s.effectiveParallelism)} /> },
     { key: "storage", label: <span>contract storage only</span>, value: s.storageParallelism, valueLabel: x(s.storageParallelism), tip: <Row k="if only storage conflicts existed" v={x(s.storageParallelism)} /> },
-    { key: "account", label: <span>same-account only</span>, value: s.accountParallelism, valueLabel: x(s.accountParallelism), muted: true, tip: <Row k="if only nonce/balance order existed" v={x(s.accountParallelism)} /> },
+    { key: "balance", label: <span>shared MON balances only</span>, value: s.balanceParallelism, valueLabel: x(s.balanceParallelism), tip: <Row k="if only payments into one account existed" v={x(s.balanceParallelism)} /> },
+    { key: "nonce", label: <span>same-sender order only</span>, value: s.nonceParallelism, valueLabel: x(s.nonceParallelism), muted: true, tip: <Row k="if only nonce order existed" v={x(s.nonceParallelism)} /> },
     { key: "ideal", label: <span className="secondary">no dependencies</span>, value: s.idealParallelism, valueLabel: x(s.idealParallelism), muted: true },
   ];
   const steps = s.whatIf.map((w, i) => ({
@@ -138,12 +142,13 @@ function Network({ r }: { r: Report }) {
     tip: (
       <>
         <div className="t">{names.get(w.fixed) ?? w.fixed}</div>
-        <Row k="storage parallelism after this fix" v={x(w.effectiveParallelism)} />
+        <Row k="parallelism after this fix" v={x(w.effectiveParallelism)} />
         <Row k="total sequential steps" v={int(w.totalPath)} />
+        <Row k="gas-weighted" v={x(w.costParallelism)} />
       </>
     ),
   }));
-  const ideal = { key: "ideal", label: <span className="secondary">no storage conflicts at all</span>, value: s.idealParallelism, valueLabel: x(s.idealParallelism), muted: true };
+  const ideal = { key: "ideal", label: <span className="secondary">no conflicts at all</span>, value: s.idealParallelism, valueLabel: x(s.idealParallelism), muted: true };
 
   return (
     <section>
@@ -165,6 +170,7 @@ function Network({ r }: { r: Report }) {
                 <Row k="transactions" v={b.txCount} />
                 <Row k="longest chain" v={b.pathLength} />
                 <Row k="parallelism" v={x(b.txCount / b.pathLength)} />
+                <Row k="gas-weighted" v={`${x(b.totalCost / b.pathCost)} of ${x(b.totalCost / b.maxTxCost)}`} />
                 <Row k="waited" v={`${b.conflictedTxs} of ${b.txCount}`} />
               </>
             );
@@ -172,24 +178,50 @@ function Network({ r }: { r: Report }) {
         />
       </div>
       <div className="card">
-        <h3>Two kinds of waits</h3>
+        <h3>Three kinds of waits</h3>
         <p className="note">
-          Parallelism each kind of dependency would allow on its own. Same-account waits are one sender submitting several transactions in a
-          block (bots, relayers): they run in nonce order by definition and no contract change removes them. Storage waits are the part
-          contract design controls, and they are the bigger limit.
+          Parallelism each kind of dependency would allow on its own. Storage waits are shared contract slots. Shared-balance waits are
+          transactions from different senders all paying MON into the same account, so each changes the balance the next one starts from.
+          Both are contract design. Same-sender waits are one sender submitting several transactions in a block (bots, relayers): they run
+          in nonce order by definition and no contract change removes them.
         </p>
         <HBars items={kinds} />
       </div>
+      <GasCard s={s} />
       <div className="card">
         <h3>What fixing a few contracts would do</h3>
         <p className="note">
-          Storage-only parallelism recomputed on the same blocks with each contract's conflicts removed, one contract at a time, always
-          picking the fix that helps most next. Contracts are often hot together, so the order matters. This is an upper bound: it removes every conflict on the contract's storage, including ones the replay classifies as inherent.
+          Parallelism recomputed on the same blocks with each contract's conflicts (its slots and its MON balance) removed, one contract at
+          a time, always picking the fix that helps most next. Every other dependency, including nonce order, stays. Contracts are often
+          hot together, so the order matters. This is an upper bound: it removes every conflict on the contract, including ones the replay
+          classifies as inherent.
         </p>
         <HBars items={[base, ...steps, ideal]} />
       </div>
       <ContractTable r={r} />
     </section>
+  );
+}
+
+function GasCard({ s }: { s: Report["summary"] }) {
+  const items = [
+    { key: "all", label: <span>all dependencies</span>, value: s.costParallelism, valueLabel: x(s.costParallelism) },
+    { key: "storage", label: <span>contract storage only</span>, value: s.storageCostParallelism, valueLabel: x(s.storageCostParallelism) },
+    { key: "balance", label: <span>shared MON balances only</span>, value: s.balanceCostParallelism, valueLabel: x(s.balanceCostParallelism) },
+    { key: "nonce", label: <span>same-sender order only</span>, value: s.nonceCostParallelism, valueLabel: x(s.nonceCostParallelism), muted: true },
+    { key: "ideal", label: <span className="secondary">no dependencies</span>, value: s.idealCostParallelism, valueLabel: x(s.idealCostParallelism), muted: true },
+  ];
+  return (
+    <div className="card">
+      <h3>Weighted by gas</h3>
+      <p className="note">
+        The same blocks with every transaction counted by its estimated gas instead of as one step: Σ gas ÷ Σ gas of the most expensive
+        chain. Even with no conflicts a block cannot finish before its heaviest transaction, so the ceiling is lower than counting
+        transactions suggests: {x(s.idealCostParallelism)} instead of {x(s.idealParallelism)}. Blocks reach{" "}
+        {pct(s.costParallelism / s.idealCostParallelism)} of it.
+      </p>
+      <HBars items={items} />
+    </div>
   );
 }
 
@@ -226,6 +258,7 @@ function ContractTable({ r }: { r: Report }) {
             <th className="num">waits</th>
             <th className="num">hot slots</th>
             <th className="num">steps if fixed alone</th>
+            <th className="num">gas if fixed alone</th>
             <th>replayed slots</th>
           </tr>
         </thead>
@@ -246,6 +279,7 @@ function ContractTable({ r }: { r: Report }) {
                   <td className="num">{int(c.waits)}</td>
                   <td className="num">{c.keys}</td>
                   <td className="num">{int(c.stepsAdded)}</td>
+                  <td className="num">{mgas(c.costAdded)}</td>
                   <td>
                     {Object.entries(sum).length === 0 ? (
                       <span className="muted">{BigInt(c.address) < 0x10000n ? "Monad system precompile" : "—"}</span>
@@ -260,7 +294,7 @@ function ContractTable({ r }: { r: Report }) {
                 </tr>
                 {isOpen && (
                   <tr>
-                    <td colSpan={5} style={{ paddingLeft: 18 }}>
+                    <td colSpan={6} style={{ paddingLeft: 18 }}>
                       <SlotTable r={r} slots={slots} />
                     </td>
                   </tr>
@@ -323,8 +357,9 @@ function GraphCard({ r, b, title, note }: { r: Report; b: BlockAnalysis; title: 
     <div className="card">
       <h3>{title}</h3>
       <p className="note">
-        {note ?? ""} {b.txCount} transactions, longest chain {b.pathLength} → parallelism {x(b.txCount / b.pathLength)}. Each dot is a transaction
-        in block order, raised one row above the transaction it waited for. Orange is the critical path.
+        {note ?? ""} {b.txCount} transactions, longest chain {b.pathLength} → parallelism {x(b.txCount / b.pathLength)}; weighted by gas{" "}
+        {x(b.totalCost / b.pathCost)} (heaviest chain {mgas(b.pathCost)} of {mgas(b.totalCost)}). Each dot is a transaction in block order,
+        raised one row above the transaction it waited for. Orange is the critical path.
       </p>
       <DepGraph
         n={b.txCount}
@@ -338,6 +373,7 @@ function GraphCard({ r, b, title, note }: { r: Report; b: BlockAnalysis; title: 
               <div className="t">tx {i} {t.system && <span className="muted">(system)</span>}</div>
               <Row k="calls" v={t.to ? names.get(t.to) ?? shortAddr(t.to) : "create"} />
               <Row k="chain depth" v={depth} />
+              <Row k="estimated gas" v={int(t.cost)} />
               {incoming.length > 0 && <div className="muted" style={{ marginTop: 4 }}>waited on</div>}
               {incoming.slice(0, 4).map((e) => (
                 <div key={e.from} style={{ fontSize: 12 }}>
@@ -382,8 +418,8 @@ function Simulations({ sims }: { sims: Report[] }) {
       <h2>Before you deploy</h2>
       <p className="intro">
         <code>hotslot simulate</code> deploys a contract on a local chain, has N different users call it in the same block, and runs the
-        same analysis, with slot names from the Solidity storage layout. Same app, four storage designs, plus a pool where the conflict
-        is real.
+        same analysis, with slot names from the Solidity storage layout. Same app, four storage designs; a pool where the conflict
+        is real; and a tip vault modeled on the busiest pattern on mainnet, before and after moving tips to prefunded balances.
       </p>
       <div className="card">
         <h3>{sel.scenario?.users ?? 64} users in one block</h3>
@@ -391,7 +427,10 @@ function Simulations({ sims }: { sims: Report[] }) {
         <HBars
           max={Math.max(...sims.map((s) => s.summary.idealParallelism))}
           items={sims.map((s) => {
-            const inherent = s.hotspots.some((h) => h.probe?.usage && !USAGE_INFO[h.probe.usage].avoidable);
+            // Gray only when nothing in the way is avoidable: every hot slot is inherent to the logic.
+            const inherent =
+              s.hotspots.some((h) => h.probe?.usage && !USAGE_INFO[h.probe.usage].avoidable) &&
+              !s.hotspots.some((h) => h.kind === "balance" || (h.probe?.usage && USAGE_INFO[h.probe.usage].avoidable));
             return {
               key: s.title,
               label: <span>{s.scenario?.contract}</span>,
@@ -403,6 +442,7 @@ function Simulations({ sims }: { sims: Report[] }) {
                   <div className="t">{s.scenario?.contract}</div>
                   <div className="muted" style={{ marginBottom: 4 }}>{s.scenario?.description}</div>
                   <Row k="parallelism" v={x(s.summary.effectiveParallelism)} />
+                  <Row k="gas-weighted" v={x(s.summary.costParallelism)} />
                   <Row k="txs that waited" v={pct(s.summary.conflictedShare)} />
                 </>
               ),
@@ -534,6 +574,14 @@ function Method() {
             <b>Parallelism</b> is Σ transactions ÷ Σ longest dependency chain: the speedup unlimited cores could get if every transaction cost
             the same. Real speedup also depends on core count, transaction cost and I/O. This is an upper bound on what the block's data
             dependencies allow, not a measurement of Monad's executor.
+          </li>
+          <li>
+            <b>Gas-weighted parallelism</b> drops the equal-cost assumption: Σ gas ÷ Σ gas of the most expensive chain. Monad charges the
+            gas limit and its receipts report <code>gasUsed</code> equal to it, so the gas a transaction actually burned is not available
+            from any RPC. hotslot estimates it from the same traces, pricing every account, storage page and slot the transaction touched
+            and changed with Monad's MIP-8 schedule (cold account 10,100, cold page 8,100, warm slot 100, page write 2,800, state growth
+            17,000), plus intrinsic and calldata gas. It leaves out compute, memory and logs, so it is a lower bound on gas used; every scan
+            checks that no estimate exceeds its transaction's gas limit.
           </li>
           <li>
             <b>Root cause</b> replays a transaction with <code>debug_traceCall</code> on the including block, with every write made by that

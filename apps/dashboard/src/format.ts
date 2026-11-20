@@ -3,6 +3,8 @@ import type { ContractLabel } from "@hotslot/core/report";
 export const x = (v: number) => `${v >= 10 ? v.toFixed(1) : v.toFixed(2)}×`;
 export const pct = (v: number) => `${Math.round(v * 100)}%`;
 export const int = (v: number) => v.toLocaleString("en-US");
+/** Gas in millions, for block- and range-sized sums. */
+export const mgas = (v: number) => `${(v / 1e6).toLocaleString("en-US", { maximumFractionDigits: v >= 1e8 ? 0 : 2 })}M gas`;
 export const shortAddr = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 export const shortHash = (h: string) => `${h.slice(0, 10)}…`;
 

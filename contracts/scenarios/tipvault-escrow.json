@@ -1,0 +1,8 @@
+{
+  "name": "tipvault-escrow",
+  "description": "The same bids against TipVaultEscrow: each searcher funds an internal balance once, and a bid only debits it and credits a per-bidder ledger. No MON moves and no shared total is written.",
+  "contract": "TipVaultEscrow",
+  "users": 64,
+  "setup": [{ "signature": "fund()", "value": "1" }],
+  "actions": [{ "signature": "bid(uint64,uint256)", "args": ["7", "70000000000000000"] }]
+}
